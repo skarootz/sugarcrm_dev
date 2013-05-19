@@ -837,6 +837,11 @@ class EmailMan extends SugarBean{
 			$mail->prepForOutbound();
 
 	    	$success = $mail->Send();
+
+            if (!$success){ // if sending email fails, we close current SMTP connection just to get sure that the next email will have a clean SMTP connection opened
+                $mail->SmtpClose();
+            }
+
 	    	//Do not save the encoded subject.
             $mail->Subject = $tmp_Subject;
 			if($success ){
