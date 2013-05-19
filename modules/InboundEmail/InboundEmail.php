@@ -2423,8 +2423,8 @@ class InboundEmail extends SugarBean {
 			$alerts = '';
 			$GLOBALS['log']->debug($l.': I-E testing string: '.$serviceTest);
 
-			// open the connection and try the test string
-			$this->conn = imap_open($serviceTest, $login, $passw);
+            // open the connection and try the test string
+            $this->conn = $this->getImapConnection($serviceTest, $login, $passw);
 
 			if(($errors = imap_last_error()) || ($alerts = imap_alerts())) {
 				if($errors == 'Too many login failures' || $errors == '[CLOSED] IMAP connection broken (server response)') { // login failure means don't bother trying the rest
@@ -4648,12 +4648,12 @@ eoq;
 
 		// final test
 		if(!is_resource($this->conn) && !$test) {
-			$this->conn = imap_open($connectString, $this->email_user, $this->email_password, CL_EXPUNGE);
+            $this->conn = $this->getImapConnection($connectString, $this->email_user, $this->email_password, CL_EXPUNGE);
 		}
 
 		if($test) {
 			if ($opts == false && !is_resource($this->conn)) {
-				$this->conn = imap_open($connectString, $this->email_user, $this->email_password, CL_EXPUNGE);
+                $this->conn = $this->getImapConnection($connectString, $this->email_user, $this->email_password, CL_EXPUNGE);
 			}
 			$errors = '';
 			$alerts = '';
@@ -4707,8 +4707,10 @@ eoq;
 			imap_close($this->conn);
 			return $msg;
 		} elseif(!is_resource($this->conn)) {
+            $GLOBALS['log']->info('Couldn\'t connect to mail server id: ' . $this->id);
 			return "false";
 		} else {
+            $GLOBALS['log']->info('Connected to mail server id: ' . $this->id);
 			return "true";
 		}
 	}
@@ -4737,6 +4739,42 @@ eoq;
 			<br>';
 		}
 	}
+
+    /**
+     * Attempt to create an IMAP connection using passed in parameters
+     * return either the connection resource or false if unable to connect
+     *
+     * @param  string  $mailbox  Mailbox to be used to create imap connection
+     * @param  string  $username The user name
+     * @param  string  $password The password associated with the username
+     * @param  integer $options  Bitmask for options parameter to the imap_open function
+     *
+     * @return resource|boolean  Connection resource on success, FALSE on failure
+     */
+    protected function getImapConnection($mailbox, $username, $password, $options = 0)
+    {
+        // if php is prior to 5.3.2, then return call without disable parameters as they are not supported yet
+        if (version_compare(phpversion(), '5.3.2', '<')) {
+            return imap_open($mailbox, $username, $password, $options);
+        }
+
+        $connection = null;
+        $authenticators = array('', 'GSSAPI', 'NTLM');
+
+        while (!$connection && ($authenticator = array_shift($authenticators)) !== null) {
+            if ($authenticator) {
+                $params = array(
+                    'DISABLE_AUTHENTICATOR' => $authenticator,
+                );
+            } else {
+                $params = array();
+            }
+
+            $connection = imap_open($mailbox, $username, $password, $options, 0, $params);
+        }
+
+        return $connection;
+    }
 
 	/**
 	 * retrieves an array of I-E beans based on the group_id
@@ -6322,6 +6360,82 @@ eoq;
         return $result;
     }
 
+    /**
+     * Import new messages from given account.
+     */
+    public function importMessages()
+    {
+        $protocol = $this->isPop3Protocol() ? 'pop3' : 'imap';
+        switch ($protocol) {
+            case 'pop3':
+                $this->importMailboxMessages($protocol);
+                break;
+            case 'imap':
+                $mailboxes = $this->getMailboxes(true);
+                foreach ($mailboxes as $mailbox) {
+                    $this->importMailboxMessages($protocol, $mailbox);
+                }
+                imap_expunge($this->conn);
+                imap_close($this->conn);
+                break;
+        }
+    }
+
+    /**
+     * Import messages from specified mailbox
+     *
+     * @param string      $protocol Mailing protocol
+     * @param string|null $mailbox  Mailbox (if applied to protocol)
+     */
+    protected function importMailboxMessages($protocol, $mailbox = null)
+    {
+        switch ($protocol) {
+            case 'pop3':
+                $msgNumbers = $this->getPop3NewMessagesToDownload();
+                break;
+            case 'imap':
+                $this->mailbox = $mailbox;
+                $this->connectMailserver();
+                $msgNumbers = $this->getNewMessageIds();
+                if (!$msgNumbers) {
+                    $msgNumbers = array();
+                }
+                break;
+            default:
+                $msgNumbers = array();
+                break;
+        }
+
+        foreach ($msgNumbers as $msgNumber) {
+            $uid = $this->getMessageUID($msgNumber, $protocol);
+            $GLOBALS['log']->info('Importing message no: ' . $msgNumber);
+            $this->importOneEmail($msgNumber, $uid, false, false);
+        }
+    }
+
+    /**
+     * Retrieves message UID by it's number
+     *
+     * @param int     $msgNumber Number of the message in current sequence
+     * @param string  $protocol  Mailing protocol
+     * @return string
+     */
+    protected function getMessageUID($msgNumber, $protocol)
+    {
+        switch ($protocol) {
+            case 'pop3':
+                $uid = $this->getUIDLForMessage($msgNumber);
+                break;
+            case 'imap':
+                $uid = imap_uid($this->conn, $msgNumber);
+                break;
+            default:
+                $uid = null;
+                break;
+        }
+
+        return $uid;
+    }
 } // end class definition
 
 

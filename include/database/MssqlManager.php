@@ -407,7 +407,7 @@ class MssqlManager extends DBManager
         //to create limit query when paging is needed. Otherwise,
         //it shows duplicates when paging on activities subpanel.
         //If not for paging, no need to use rownumber() function
-        if ($count == 1)
+        if ($count == 1 && $start == 0)
         {
             $limitUnionSQL = "SELECT TOP $count * FROM (" .$unionsql .") as top_count ".$unionOrderBy;
         }
@@ -441,16 +441,16 @@ class MssqlManager extends DBManager
             $GLOBALS['log']->debug(print_r(func_get_args(),true));
             $this->lastsql = $sql;
             $matches = array();
-            preg_match('/^(.*SELECT )(.*?FROM.*WHERE)(.*)$/isU',$sql, $matches);
+            preg_match('/^(.*SELECT\b)(.*?\bFROM\b.*\bWHERE\b)(.*)$/isU',$sql, $matches);
             if (!empty($matches[3])) {
                 if ($start == 0) {
                     $match_two = strtolower($matches[2]);
                     if (!strpos($match_two, "distinct")> 0 && strpos($match_two, "distinct") !==0) {
                         $orderByMatch = array();
-                        preg_match('/^(.*)(ORDER BY)(.*)$/is',$matches[3], $orderByMatch);
+                        preg_match('/^(.*)(\bORDER BY\b)(.*)$/is',$matches[3], $orderByMatch);
                         if (!empty($orderByMatch[3])) {
                             $selectPart = array();
-                            preg_match('/^(.*)(\bFROM .*)$/isU', $matches[2], $selectPart);
+                            preg_match('/^(.*)(\bFROM\b.*)$/isU', $matches[2], $selectPart);
                             $newSQL = "SELECT TOP $count * FROM
                                 (
                                     " . $matches[1] . $selectPart[1] . ", ROW_NUMBER()
@@ -491,29 +491,36 @@ class MssqlManager extends DBManager
                     }
                 } else {
                     $orderByMatch = array();
-                    preg_match('/^(.*)(ORDER BY)(.*)$/is',$matches[3], $orderByMatch);
+                    preg_match('/^(.*)(\bORDER BY\b)(.*)$/is',$matches[3], $orderByMatch);
 
                     //if there is a distinct clause, parse sql string as we will have to insert the rownumber
                     //for paging, AFTER the distinct clause
                     $grpByStr = '';
                     $hasDistinct = strpos(strtolower($matches[0]), "distinct");
+
+                    require_once('include/php-sql-parser.php');
+                    $parser = new PHPSQLParser();
+                    $sqlArray = $parser->parse($sql);
+
                     if ($hasDistinct) {
                         $matches_sql = strtolower($matches[0]);
                         //remove reference to distinct and select keywords, as we will use a group by instead
                         //we need to use group by because we are introducing rownumber column which would make every row unique
 
                         //take out the select and distinct from string so we can reuse in group by
-                        $dist_str = ' distinct ';
-                        $distinct_pos = strpos($matches_sql, $dist_str);
-                        $matches_sql = substr($matches_sql,$distinct_pos+ strlen($dist_str));
+                        $dist_str = 'distinct';
+                        preg_match('/\b' . $dist_str . '\b/simU', $matches_sql, $matchesPartSQL, PREG_OFFSET_CAPTURE);
+                        $matches_sql = trim(substr($matches_sql,$matchesPartSQL[0][1] + strlen($dist_str)));
                         //get the position of where and from for further processing
-                        $from_pos = strpos($matches_sql , " from ");
-                        $where_pos = strpos($matches_sql, "where");
+                        preg_match('/\bfrom\b/simU', $matches_sql, $matchesPartSQL, PREG_OFFSET_CAPTURE);
+                        $from_pos = $matchesPartSQL[0][1];
+                        preg_match('/\where\b/simU', $matches_sql, $matchesPartSQL, PREG_OFFSET_CAPTURE);
+                        $where_pos = $matchesPartSQL[0][1];
                         //split the sql into a string before and after the from clause
                         //we will use the columns being selected to construct the group by clause
                         if ($from_pos>0 ) {
-                            $distinctSQLARRAY[0] = substr($matches_sql,0, $from_pos+1);
-                            $distinctSQLARRAY[1] = substr($matches_sql,$from_pos+1);
+                            $distinctSQLARRAY[0] = substr($matches_sql, 0, $from_pos);
+                            $distinctSQLARRAY[1] = substr($matches_sql, $from_pos);
                             //get position of order by (if it exists) so we can strip it from the string
                             $ob_pos = strpos($distinctSQLARRAY[1], "order by");
                             if ($ob_pos) {
@@ -524,37 +531,14 @@ class MssqlManager extends DBManager
                             $distinctSQLARRAY[1] = preg_replace('/\)\s$/',' ',$distinctSQLARRAY[1]);
                         }
 
-                        //place group by string into array
-                        $grpByArr = explode(',', $distinctSQLARRAY[0]);
-                        $first = true;
-                        //remove the aliases for each group by element, sql server doesnt like these in group by.
-                        foreach ($grpByArr as $gb) {
-                            $gb = trim($gb);
-
-                            //clean out the extra stuff added if we are concatenating first_name and last_name together
-                            //this way both fields are added in correctly to the group by
-                            $gb = str_replace("isnull(","",$gb);
-                            $gb = str_replace("'') + ' ' + ","",$gb);
-
-                            //remove outer reference if they exist
-                            if (strpos($gb,"'")!==false){
+                        $grpByStr = array();
+                        foreach ($sqlArray['SELECT'] as $record) {
+                            if ($record['expr_type'] == 'const') {
                                 continue;
                             }
-                            //if there is a space, then an alias exists, remove alias
-                            if (strpos($gb,' ')){
-                                $gb = substr( $gb, 0,strpos($gb,' '));
-                            }
-
-                            //if resulting string is not empty then add to new group by string
-                            if (!empty($gb)) {
-                                if ($first) {
-                                    $grpByStr .= " $gb";
-                                    $first = false;
-                                } else {
-                                    $grpByStr .= ", $gb";
-                                }
-                            }
+                            $grpByStr[] = trim($record['base_expr']);
                         }
+                        $grpByStr = implode(', ', $grpByStr);
                     }
 
                     if (!empty($orderByMatch[3])) {
@@ -563,7 +547,7 @@ class MssqlManager extends DBManager
                             $newSQL = "SELECT TOP $count * FROM
                                         (
                                             SELECT ROW_NUMBER()
-                                                OVER (ORDER BY ".$this->returnOrderBy($sql, $orderByMatch[3]).") AS row_number,
+                                                OVER (ORDER BY " . preg_replace('/^' . $dist_str . '\s+/', '', $this->returnOrderBy($sql, $orderByMatch[3])) . ") AS row_number,
                                                 count(*) counter, " . $distinctSQLARRAY[0] . "
                                                 " . $distinctSQLARRAY[1] . "
                                                 group by " . $grpByStr . "
@@ -580,23 +564,11 @@ class MssqlManager extends DBManager
                                     WHERE row_number > $start";
                         }
                     }else{
-                        //bug: 22231 Records in campaigns' subpanel may not come from
-                        //table of $_REQUEST['module']. Get it directly from query
-                        $upperQuery = strtoupper($matches[2]);
-                        if (!strpos($upperQuery,"JOIN")){
-                            $from_pos = strpos($upperQuery , "FROM") + 4;
-                            $where_pos = strpos($upperQuery, "WHERE");
-                            $tablename = trim(substr($upperQuery,$from_pos, $where_pos - $from_pos));
-                        }else{
-                            // FIXME: this looks really bad. Probably source for tons of bug
-                            // needs to be removed
-                            $tablename = $this->getTableNameFromModuleName($_REQUEST['module'],$sql);
-                        }
                         //if there is a distinct clause, form query with rownumber after distinct
                         if ($hasDistinct) {
                              $newSQL = "SELECT TOP $count * FROM
                                             (
-                            SELECT ROW_NUMBER() OVER (ORDER BY ".$tablename.".id) AS row_number, count(*) counter, " . $distinctSQLARRAY[0] . "
+                            SELECT ROW_NUMBER() OVER (ORDER BY ".$grpByStr.") AS row_number, count(*) counter, " . $distinctSQLARRAY[0] . "
                                                         " . $distinctSQLARRAY[1] . "
                                                     group by " . $grpByStr . "
                                             )
@@ -606,7 +578,7 @@ class MssqlManager extends DBManager
                         else {
                              $newSQL = "SELECT TOP $count * FROM
                                            (
-                                  " . $matches[1] . " ROW_NUMBER() OVER (ORDER BY ".$tablename.".id) AS row_number, " . $matches[2] . $matches[3]. "
+                                  " . $matches[1] . " ROW_NUMBER() OVER (ORDER BY " . $sqlArray['FROM'][0]['alias'] . ".id) AS row_number, " . $matches[2] . $matches[3]. "
                                            )
                                            AS a
                                            WHERE row_number > $start";
@@ -696,7 +668,7 @@ class MssqlManager extends DBManager
         $pattern_array = array_reverse($pattern_array);
 
         foreach ($pattern_array as $key => $replace) {
-            $token = str_replace( "##".$key."##", $replace,$token);
+            $token = str_replace( " ##".$key."## ", $replace,$token);
         }
 
         return $token;
@@ -813,13 +785,13 @@ class MssqlManager extends DBManager
         if (strpos($orig_order_match, " ") === false) {
         	$orig_order_match .= " ASC";
         }
-            
+
         //grab first space in order by
         $firstSpace = strpos($orig_order_match, " ");
 
         //split order by into column name and ascending/descending
         $orderMatch = " " . strtolower(substr($orig_order_match, 0, $firstSpace));
-        $asc_desc =  substr($orig_order_match,$firstSpace);
+        $asc_desc = trim(substr($orig_order_match,$firstSpace));
 
         //look for column name as an alias in sql string
         $found_in_sql = $this->findColumnByAlias($sql, $orderMatch);
@@ -860,7 +832,8 @@ class MssqlManager extends DBManager
                 $psql = trim(substr($sql, 0, $found_in_sql));
 
             //grab the last comma before the alias
-            $comma_pos = strrpos($psql, " ");
+            preg_match('/\s+' . trim($orderMatch). '/', $psql, $match, PREG_OFFSET_CAPTURE);
+            $comma_pos = $match[0][1];
             //substring between the comma and the alias to find the joined_table alias and column name
             $col_name = substr($psql,0, $comma_pos);
 
@@ -1956,7 +1929,7 @@ EOQ;
     protected function quoteTerm($term)
     {
         $term = str_replace("%", "*", $term); // Mssql wildcard is *
-        return '"'.$term.'"';
+        return '"'.str_replace('"', '', $term).'"';
     }
 
     /**

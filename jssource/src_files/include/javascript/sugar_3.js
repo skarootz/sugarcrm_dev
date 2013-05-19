@@ -186,8 +186,8 @@ SUGAR.isSupportedBrowser = function(){
     var supportedBrowsers = {
         msie : {min:8, max:10}, // IE 8, 9, 10
         safari : {min:534}, // Safari 5.1
-        mozilla : {min:17}, // Firefox 17
-        chrome : {min:537.13} // Chrome 24
+        mozilla : {min:20.0}, // Firefox 20.0
+        chrome : {min:537.31} // Chrome 26
     };
     var current = String($.browser.version);
     var supported;
@@ -3151,7 +3151,7 @@ SUGAR.util = function () {
 					try {
 						if (typeof appendMode != 'undefined' && appendMode)
 						{
-							theDiv.innerHTML += data.responseText;
+							theDiv.insertAdjacentHTML('beforeend', data.responseText);
 						}
 						else
 						{
@@ -3817,15 +3817,21 @@ SUGAR.searchForm = function() {
 
                 if ( elemType == 'text' || elemType == 'textarea' || elemType == 'password' ) {
                     elem.value = '';
-                }
-                else if ( elemType == 'select' || elemType == 'select-one' || elemType == 'select-multiple' ) {
+                } else if (elemType == 'select-one') {
                     // We have, what I hope, is a select box, time to unselect all options
-                    var optionList = elem.options;
-
-                    if (optionList.length > 0) {
-                    	optionList[0].selected = "selected";
+                    var optionList = elem.options,
+                        selectedIndex = 0;
+                    for (var ii = 0; ii < optionList.length; ii++) {
+                        if (optionList[ii].value == '') {
+                            selectedIndex = ii;
+                            break;
+                        }
                     }
-
+                    if (optionList.length > 0) {
+                        optionList[selectedIndex].selected = "selected";
+                    }
+                } else if (elemType == 'select-multiple') {
+                    var optionList = elem.options;
                     for ( var ii = 0 ; ii < optionList.length ; ii++ ) {
                         optionList[ii].selected = false;
                     }
@@ -3835,19 +3841,31 @@ SUGAR.searchForm = function() {
                     elem.selected = false;
                 }
                 else if ( elemType == 'hidden' ) {
-                    // We only want to reset the hidden values that link to the select boxes.
-                    // _c custom field kludge added to fix Bug 41384
-                    if ( ( elem.name.length > 3 && elem.name.substring(elem.name.length-3) == '_id' )
-                         || ((elem.name.length > 9) && (elem.name.substring(elem.name.length - 9) == '_id_basic'))
-                         || ( elem.name.length > 12 && elem.name.substring(elem.name.length-12) == '_id_advanced' )
-                         || ( elem.name.length > 2 && elem.name.substring(elem.name.length-2) == '_c' )
-                         || ((elem.name.length > 8) && (elem.name.substring(elem.name.length - 8) == '_c_basic'))
-                         || ( elem.name.length > 11 && elem.name.substring(elem.name.length-11) == '_c_advanced' ) )
+                    if (
+                        // For bean selection
+                        elem.name.indexOf("_id") != -1
+                        // For custom fields
+                        || elem.name.indexOf("_c") != -1
+                        // For advanced fields, like team collection, or datetime fields
+                        || elem.name.indexOf("_advanced") != -1
+                        )
                     {
                         elem.value = '';
                     }
                 }
             }
+
+            // If there are any collections
+            if (typeof(collection) !== 'undefined')
+            {
+                // Loop through all the collections on the page and run clean_up()
+                for (key in collection)
+                {
+                    // Clean up only removes blank fields, if any
+                    collection[key].clean_up();
+                }
+            }
+
 			SUGAR.savedViews.clearColumns = true;
 		}
 	};
@@ -4976,4 +4994,26 @@ SUGAR.MultiEnumAutoComplete.getMultiSelectValuesFromKeys = function(options_inde
         }
     }
     return final_arr;
+}
+
+function convertReportDateTimeToDB(dateValue, timeValue)
+{
+    var date_match = dateValue.match(date_reg_format);
+    var time_match = timeValue.match(/([0-9]{1,2})\:([0-9]{1,2})([ap]m)/);
+    if ( date_match != null && time_match != null) {
+        time_match[1] = parseInt(time_match[1]);
+        if (time_match[3] == 'pm') {
+            time_match[1] = time_match[1] + 12;
+            if (time_match[1] >= 24) {
+                time_match[1] = time_match[1] - 24;
+            }
+        } else if (time_match[3] == 'am' && time_match[1] == 12) {
+            time_match[1] = 0;
+        }
+        if (time_match[1] < 10) {
+            time_match[1] = '0' + time_match[1];
+        }
+        return date_match[date_reg_positions['Y']] + "-"+date_match[date_reg_positions['m']] + "-"+date_match[date_reg_positions['d']] + ' '+ time_match[1] + ':' + time_match[2] + ':00';
+    }
+    return '';
 }

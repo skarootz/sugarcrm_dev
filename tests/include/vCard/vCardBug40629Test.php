@@ -43,7 +43,10 @@ class vCardBug40629Test extends Sugar_PHPUnit_Framework_TestCase
     
     public function setUp()
     {
-        $GLOBALS['current_user'] = SugarTestUserUtilities::createAnonymousUser();
+        SugarTestHelper::setUp('beanList');
+        SugarTestHelper::setUp('beanFiles');
+        SugarTestHelper::setUp('current_user', array(true, 1));
+
         $this->account = SugarTestAccountUtilities::createAccount();
         $this->account->name = "SDizzle Inc";
         $this->account->save();
@@ -51,7 +54,7 @@ class vCardBug40629Test extends Sugar_PHPUnit_Framework_TestCase
     
     public function tearDown()
     {
-        unset($GLOBALS['current_user']);
+        SugarTestHelper::tearDown();
         SugarTestAccountUtilities::removeAllCreatedAccounts();
     }
     

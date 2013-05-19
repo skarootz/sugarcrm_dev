@@ -35,47 +35,25 @@
  ********************************************************************************/
 
 
-require_once('modules/ModuleBuilder/parsers/relationships/ActivitiesRelationship.php');
+require_once('include/php-sql-parser.php');
 
-/**
- * Bug #42169
- * Creating Relationship to Activities From Custom Module to Activities Via Studio Results in Module Key Displayed in Related To Dropdown
- *
- * @author mgusev@sugarcrm.com
- * @ticket 42169
- */
-class Bug42169Test extends Sugar_PHPUnit_Framework_TestCase
+class Bug62329Test extends Sugar_PHPUnit_Framework_TestCase
 {
 
-    /**
-     * @group 42169
-     */
-    public function testBuildLabels()
+    public function testEmptyProcessSelectExpr()
     {
-        $definition = array(
-            'lhs_module' => 'lhs_module',
-            'lhs_label' => 'lhs_label'
-        );
-        $activitiesRelationship = new ActivitiesRelationship($definition);
-        $actual = $activitiesRelationship->buildLabels();
 
-        foreach($actual as $item)
-        {
-            if (isset($item['display_label']) == false)
-            {
-                continue;
-            }
-            if (is_array($item['display_label']))
-            {
-                if (isset($item['display_label'][$definition['lhs_module']]))
-                {
-                    $this->assertEquals($definition['lhs_label'], $item['display_label'][$definition['lhs_module']], 'Label is missed');
-                }
-            }
-            else
-            {
-                $this->assertEquals($definition['lhs_label'], $item['display_label'], 'Label is missed');
-            }
-        }
+        $parser = new PHPSQLParser();
+
+        //the key part of the sql string is the parenthesis.  This use case is more prone to fail in mssql environments
+        //this will eventually result in PHPSQLParser::process_select_expr() processing an empty string, which is the
+        //error we are testing for.
+
+        $sql = '(SELECT  contacts.*  FROM contacts  ) ORDER  BY  contacts.phone_work asc';
+        $sqlARR = $parser->parse($sql);
+
+        // assert an array was returned.  If an error occurred a php fatal error will bubble up and nothing will be returned
+        $this->assertInternalType('array', $sqlARR, "there was an error while parsing the sql string: ".$sql);
+
     }
 }

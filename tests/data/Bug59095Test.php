@@ -35,78 +35,46 @@
  ********************************************************************************/
 
 
-require_once('include/SearchForm/SearchForm2.php');
-
 /**
- * Bug #54929
- * Search Filtering is Broken when using Numbers as the Item Names in the Sales Stage Dropdown Menu
+ * Bug #59095 : Quick Search field not returning defined limit results.
  *
- * @author vromanenko@sugarcrm.com
- * @ticked 54929
+ * @ticket 59095
+ * @author myarotsky@sugarcrm.com
  */
-class Bug54929Test extends Sugar_PHPUnit_Framework_TestCase
+class Bug59095Test extends Sugar_PHPUnit_Framework_TestCase
 {
-    /**
-     * @var SearchForm
-     */
-    protected $searchForm;
-
-    /**
-     * @var Opportunity
-     */
-    protected $seed;
-
-    protected $module;
-
-    protected $action;
-
-    protected $normalAppListStringsOfSalesStageDom;
-
-    protected function setUp()
+    public $query;
+    public function setUp()
     {
-        SugarTestHelper::setUp('app_strings');
+        global $sugar_config;
+        SugarTestHelper::setUp('beanFiles');
+        SugarTestHelper::setUp('beanList');
+        SugarTestHelper::setUp('current_user', array(true, 1));
         SugarTestHelper::setUp('app_list_strings');
-        $this->seed = new Opportunity();
-        $this->module = 'Opportunities';
-        $this->action = 'index';
-
-        $this->normalAppListStringsOfSalesStageDom = $GLOBALS['app_list_strings']['sales_stage_dom'];
-        $GLOBALS['app_list_strings']['sales_stage_dom'] = array(
-            ''      => '',
-            '00'    => '0-zero',
-            '10'    => '10-ten',
-            '100'   => '100-hundred'
-        );
+        SugarTestHelper::setUp('app_strings');
+        $sugar_config['disable_count_query'] = true;
+        for ($i = 0; $i < 3; $i++)
+        {
+            SugarTestAccountUtilities::createAccount();
+        }
+        $this->query = "SELECT accounts.*  FROM accounts WHERE 1=1";
     }
 
-    protected function tearDown()
+    public function tearDown()
     {
-        $GLOBALS['app_list_strings']['sales_stage_dom'] = $this->normalAppListStringsOfSalesStageDom;
-        SugarTestHelper::tearDown();
+        global $sugar_config;
+        unset($sugar_config['disable_count_query']);
+        SugarTestAccountUtilities::removeAllCreatedAccounts();
     }
 
     /**
-     * Test that indexes of the sales stage field options has not been changed.
-     * @group bug54929
+     * Quick Search field not returning defined limit results.
+     * @group 59095
      */
-    public function testIntegerIndexesOfMultiSelectFieldOptionsOnTheAdvancedSearch()
+    public function testShouldReturnDefinedLimit()
     {
-        $searchMetaData = SearchForm::retrieveSearchDefs($this->module);
-        $this->searchForm = new SearchForm($this->seed, $this->module, $this->action);
-        $this->searchForm->setup(
-            $searchMetaData['searchdefs'],
-            $searchMetaData['searchFields'],
-            'SearchFormGeneric.tpl',
-            'advanced_search',
-            array()
-        );
-        $result = $this->searchForm->fieldDefs['sales_stage_advanced']['options'];
-
-        $this->assertArrayHasKey('', $result);
-        $this->assertArrayHasKey('00', $result);
-        $this->assertArrayHasKey(10, $result);
-        $this->assertArrayHasKey(100, $result);
-        $this->assertEquals(4, count($result));
+        $sb = BeanFactory::getBean('Accounts');
+        $res = $sb->process_list_query($this->query, 0, 2);
+        $this->assertEquals(2, count($res['list']));
     }
-
 }

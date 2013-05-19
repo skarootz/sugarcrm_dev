@@ -354,6 +354,7 @@ function get_sugar_config_defaults() {
 	  'default_view' => 'week',
 	  'show_calls_by_default' => true,
 	  'show_tasks_by_default' => true,
+	  'show_completed_by_default' => true,
 	  'editview_width' => 990,
 	  'editview_height' => 485,
 	  'day_timestep' => 15,
@@ -1531,8 +1532,14 @@ function get_select_options_with_id_separate_key ($label_list, $key_list, $selec
 		$selected_string = '';
 		// the system is evaluating $selected_key == 0 || '' to true.  Be very careful when changing this.  Test all cases.
 		// The bug was only happening with one of the users in the drop down.  It was being replaced by none.
-		if (($option_key != '' && $selected_key == $option_key) || ($selected_key == '' && $option_key == '' && !$massupdate) || (is_array($selected_key) &&  in_array($option_key, $selected_key)))
-		{
+        if (
+            ($option_key != '' && $selected_key == $option_key)
+            || (
+                $option_key == ''
+                && (($selected_key == '' && !$massupdate) || $selected_key == '__SugarMassUpdateClearField__')
+            )
+            || (is_array($selected_key) &&  in_array($option_key, $selected_key))
+        ) {
 			$selected_string = 'selected ';
 		}
 
@@ -2096,6 +2103,11 @@ function preprocess_param($value){
 		}
 
 		$value = securexss($value);
+	}
+	else if (is_array($value)){
+	    foreach ($value as $key => $element) {
+	        $value[$key] = preprocess_param($element);
+	    }
 	}
 
 	return $value;
